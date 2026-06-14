@@ -50,20 +50,19 @@ export default function JiraConfigModal({ onClose }: Props) {
   async function testConnection() {
     setTesting(true)
     setTestResult(null)
+    const testCfg: JiraConfig = {
+      ...cfg,
+      projectKeys: projectKeysRaw.split(',').map((k) => k.trim()).filter(Boolean),
+    }
     try {
-      const testCfg: JiraConfig = {
-        ...cfg,
-        projectKeys: projectKeysRaw.split(',').map((k) => k.trim()).filter(Boolean),
-      }
       await fetchJiraIssues(testCfg, 'assignee is not EMPTY AND statusCategory != Done ORDER BY updated DESC')
       setTestResult({ ok: true, msg: 'Connection successful ✓' })
     } catch (err) {
       const msg = (err as Error).message
-      const noProxy = !testCfg.proxyUrl
       const isNetwork = msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('network error')
       setTestResult({
         ok: false,
-        msg: noProxy && isNetwork ? 'CORS error — set a Proxy URL below.' : msg,
+        msg: !testCfg.proxyUrl && isNetwork ? 'CORS error — set a Proxy URL below.' : msg,
       })
     }
     setTesting(false)
