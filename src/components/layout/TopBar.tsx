@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useStore } from '../../store'
 import { PALETTE } from '../../constants'
 import MembersModal from '../modals/MembersModal'
@@ -163,10 +163,13 @@ function ProjectDropdown() {
 interface TopBarProps {
   onStandup: () => void
   urgentCount: number
+  onJiraConfig: () => void
 }
 
-export default function TopBar({ onStandup, urgentCount }: TopBarProps) {
-  const { exportJSON, importJSON, setNotifsEnabled } = useStore()
+export default function TopBar({ onStandup, urgentCount, onJiraConfig }: TopBarProps) {
+  const { exportJSON, importJSON, setNotifsEnabled, syncJira } = useStore()
+  const jiraConfig = useStore((s) => s.jiraConfig)
+  const [jiraSyncing, setJiraSyncing] = useState(false)
 
   const handleImport = () => {
     const input = document.createElement('input')
@@ -203,6 +206,13 @@ export default function TopBar({ onStandup, urgentCount }: TopBarProps) {
       setNotifsEnabled(false)
     }
   }
+
+  const handleJiraSync = useCallback(async () => {
+    if (!jiraConfig.enabled || !jiraConfig.token) { onJiraConfig(); return }
+    setJiraSyncing(true)
+    try { await syncJira() } catch {}
+    setJiraSyncing(false)
+  }, [jiraConfig.enabled, jiraConfig.token, syncJira, onJiraConfig])
 
   const notifPerm = typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported'
   const notifIcon = notifPerm === 'granted' ? '🔔' : '🔕'
@@ -244,6 +254,21 @@ export default function TopBar({ onStandup, urgentCount }: TopBarProps) {
         <button onClick={handleImport} style={btnStyle}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 14 12 9 17 14"/><line x1="12" y1="9" x2="12" y2="21"/></svg>
           Restore
+        </button>
+        <button
+          onClick={onJiraConfig}
+          title="Jira settings"
+          style={{ ...btnStyle, paddingRight: 6, borderRight: 'none', borderRadius: '6px 0 0 6px', borderColor: jiraConfig.enabled ? '#60a5fa' : 'var(--border)', color: jiraConfig.enabled ? '#60a5fa' : 'var(--text3)' }}
+        >
+          🔗 Jira
+        </button>
+        <button
+          onClick={handleJiraSync}
+          disabled={jiraSyncing}
+          title="Sync from Jira"
+          style={{ ...btnStyle, paddingLeft: 7, borderLeft: '1px solid var(--border)', borderRadius: '0 6px 6px 0', borderColor: jiraConfig.enabled ? '#60a5fa' : 'var(--border)', color: jiraConfig.enabled ? '#60a5fa' : 'var(--text3)', opacity: jiraSyncing ? 0.6 : 1 }}
+        >
+          {jiraSyncing ? '⟳' : '↻'}
         </button>
         <button onClick={onStandup} style={{ ...btnStyle, background: 'var(--green-dim)', borderColor: '#86efac', color: 'var(--green)' }}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

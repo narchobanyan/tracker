@@ -3,6 +3,18 @@ export type Priority = 'low' | 'medium' | 'high' | 'critical'
 export type ScheduleType = 'work' | 'vacation' | 'dayoff' | 'sick' | 'holiday'
 export type View = 'daily' | 'deadlines' | 'search' | 'performance' | 'schedule'
 
+export interface JiraConfig {
+  enabled: boolean
+  baseUrl: string
+  email: string
+  token: string
+  projectKeys: string[]
+  syncInterval: number  // minutes; 0 = manual only
+  proxyUrl: string      // optional CORS proxy prefix, e.g. https://worker.dev/?url=
+  lastSync?: string
+  lastSyncResult?: string
+}
+
 export interface PrEntry {
   url: string
   date: string
@@ -39,6 +51,7 @@ export interface Task {
   date: string
   carriedOver?: boolean
   carriedFrom?: string
+  jiraSync?: boolean
 }
 
 export interface EmploymentPeriod {
@@ -54,6 +67,7 @@ export interface Developer {
   role: string
   color: string
   periods?: EmploymentPeriod[]
+  jiraEmail?: string
 }
 
 export interface Project {
@@ -87,4 +101,5 @@ export interface AppState {
   selectedDate: string
   view: View
   notifsEnabled: boolean
+  jiraConfig: JiraConfig
 }

@@ -10,6 +10,7 @@ import SearchView from './components/views/SearchView'
 import PerformanceView from './components/views/PerformanceView'
 import ScheduleView from './components/views/ScheduleView'
 import StandupModal from './components/modals/StandupModal'
+import JiraConfigModal from './components/modals/JiraConfigModal'
 
 const VIEW_LABELS: Record<string, string> = {
   daily: '📅 Daily',
@@ -45,9 +46,11 @@ function saveNotified(o: Record<string, number>) {
 }
 
 export default function App() {
-  const { view, setView, selectedDate, selectedProject, projects, tasks, developers, autoCarryOverdue } = useStore()
+  const { view, setView, selectedDate, selectedProject, projects, tasks, developers, autoCarryOverdue, syncJira } = useStore()
+  const jiraConfig = useStore((s) => s.jiraConfig)
   const [toast, setToast] = useState<string | null>(null)
   const [standupOpen, setStandupOpen] = useState(false)
+  const [jiraConfigOpen, setJiraConfigOpen] = useState(false)
   const [alerts, setAlerts] = useState<InAppAlert[]>([])
   const alertIdRef = useRef(0)
   const tasksRef = useRef(tasks)
@@ -145,11 +148,24 @@ export default function App() {
     return () => clearInterval(id)
   }, [])
 
+  // Jira auto-poll
+  useEffect(() => {
+    if (!jiraConfig.enabled || !jiraConfig.syncInterval || !jiraConfig.token) return
+    const ms = jiraConfig.syncInterval * 60 * 1000
+    const id = setInterval(async () => {
+      try {
+        const { added, updated } = await syncJira()
+        if (added || updated) showToast(`Jira synced — ${added} added, ${updated} updated`)
+      } catch {}
+    }, ms)
+    return () => clearInterval(id)
+  }, [jiraConfig.enabled, jiraConfig.syncInterval, jiraConfig.token])
+
   const proj = projects.find((p) => p.id === selectedProject)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
-      <TopBar onStandup={() => setStandupOpen(true)} urgentCount={urgentCount} />
+      <TopBar onStandup={() => setStandupOpen(true)} urgentCount={urgentCount} onJiraConfig={() => setJiraConfigOpen(true)} />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* sidebar */}
@@ -217,6 +233,9 @@ export default function App() {
 
       {/* standup modal */}
       {standupOpen && <StandupModal onClose={() => setStandupOpen(false)} />}
+
+      {/* jira config modal */}
+      {jiraConfigOpen && <JiraConfigModal onClose={() => setJiraConfigOpen(false)} />}
     </div>
   )
 }

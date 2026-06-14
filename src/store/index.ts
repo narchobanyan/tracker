@@ -1,7 +1,8 @@
 import { create } from 'zustand'
-import type { AppState, Developer, Project, Task, JiraIssue, View, EmploymentPeriod } from '../types'
+import type { AppState, Developer, Project, Task, JiraIssue, JiraConfig, View, EmploymentPeriod } from '../types'
 import { todayStr, offsetDate, nextWorkDay } from '../utils/dates'
 import { getJiras } from '../utils/format'
+import { fetchJiraIssues, rawToJiraItem } from '../utils/jira-api'
 
 const LS_KEY = 'pmtracker_v4'
 
@@ -19,6 +20,15 @@ function freshState(): AppState {
     schedule: {},
     scheduleHours: {},
     notifsEnabled: false,
+    jiraConfig: {
+      enabled: false,
+      baseUrl: '',
+      email: '',
+      token: '',
+      projectKeys: [],
+      syncInterval: 5,
+      proxyUrl: '',
+    },
     developers: [
       { id: 'd1', name: 'Alex Morgan', role: 'Frontend', color: '#2563eb', periods: [] },
       { id: 'd2', name: 'Sam Rivera', role: 'Backend', color: '#16a34a', periods: [] },
@@ -74,6 +84,7 @@ function persistState(state: AppState): void {
         schedule: state.schedule,
         scheduleHours: state.scheduleHours,
         notifsEnabled: state.notifsEnabled,
+        jiraConfig: state.jiraConfig,
       }),
     )
   } catch {}
@@ -102,6 +113,7 @@ function loadState(): Partial<AppState> {
       schedule: sched,
       scheduleHours: (d as AppState & { scheduleHours?: Record<string, Record<string, number>> }).scheduleHours ?? {},
       notifsEnabled: (d as AppState).notifsEnabled ?? false,
+      ...((d as AppState).jiraConfig ? { jiraConfig: (d as AppState).jiraConfig } : {}),
     }
   } catch {
     return {}
@@ -137,6 +149,8 @@ interface StoreActions {
   setScheduleHours: (devId: string, date: string, hours: number) => void
 
   setNotifsEnabled: (v: boolean) => void
+  setJiraConfig: (cfg: JiraConfig) => void
+  syncJira: () => Promise<{ added: number; updated: number }>
   exportJSON: () => void
   importJSON: (json: string) => void
 }
@@ -400,6 +414,91 @@ export const useStore = create<Store>((set, get) => {
       }),
 
     setNotifsEnabled: (notifsEnabled) => set((s) => withSave({ ...s, notifsEnabled })),
+
+    setJiraConfig: (jiraConfig) => set((s) => withSave({ ...s, jiraConfig })),
+
+    syncJira: async () => {
+      const { jiraConfig, developers, tasks } = get()
+      if (!jiraConfig.enabled || !jiraConfig.baseUrl || !jiraConfig.token) {
+        throw new Error('Jira not configured')
+      }
+      const jiraDevs = developers.filter((d) => d.jiraEmail)
+      if (!jiraDevs.length) throw new Error('No developers have a Jira email set')
+
+      const emailList = jiraDevs.map((d) => `"${d.jiraEmail}"`).join(',')
+      const projList = jiraConfig.projectKeys.map((k) => `"${k.trim()}"`).join(',')
+      const jql = projList
+        ? `project in (${projList}) AND assignee in (${emailList}) AND statusCategory != Done ORDER BY updated DESC`
+        : `assignee in (${emailList}) AND statusCategory != Done ORDER BY updated DESC`
+
+      const issues = await fetchJiraIssues(jiraConfig, jql)
+
+      const today = todayStr()
+      let added = 0
+      let updated = 0
+
+      const tasksCopy = tasks.map((t) => ({ ...t, jiras: [...(t.jiras ?? [])] }))
+      const newTasks: Task[] = []
+
+      // Group issues by developer
+      const byDev = new Map<string, typeof issues>()
+      issues.forEach((issue) => {
+        const email = issue.fields.assignee?.emailAddress
+        const dev = jiraDevs.find((d) => d.jiraEmail?.toLowerCase() === email?.toLowerCase())
+        if (!dev) return
+        const arr = byDev.get(dev.id) ?? []
+        arr.push(issue)
+        byDev.set(dev.id, arr)
+      })
+
+      byDev.forEach((devIssues, devId) => {
+        const syncTask = tasksCopy.find((t) => t.devId === devId && t.date === today && t.jiraSync)
+        const incoming = devIssues.map((i) => rawToJiraItem(i, jiraConfig.baseUrl))
+
+        if (syncTask) {
+          const merged = incoming.map((nj) => {
+            const existing = syncTask.jiras.find((ej) => ej.url === nj.url)
+            if (existing) {
+              updated++
+              return { ...existing, status: nj.status, priority: nj.priority, deadline: nj.deadline || existing.deadline }
+            }
+            added++
+            return nj
+          })
+          const manual = syncTask.jiras.filter((ej) => !incoming.some((nj) => nj.url === ej.url))
+          syncTask.jiras = [...merged, ...manual]
+          syncTask.status = syncTask.jiras.every((j) => j.status === 'done') ? 'done' : 'inprogress'
+        } else {
+          added += incoming.length
+          newTasks.push({
+            id: makeId('t'),
+            devId,
+            projectId: '',
+            title: 'Jira Issues',
+            status: 'inprogress',
+            jira: '',
+            jiras: incoming,
+            pr: '',
+            prs: [],
+            deadline: '',
+            deadlineTime: '',
+            reviewDate: '',
+            reviewTime: '',
+            comment: '',
+            date: today,
+            jiraSync: true,
+          })
+        }
+      })
+
+      const newConfig: JiraConfig = {
+        ...jiraConfig,
+        lastSync: new Date().toISOString(),
+        lastSyncResult: `+${added} added, ${updated} updated`,
+      }
+      set((s) => withSave({ ...s, tasks: [...tasksCopy, ...newTasks], jiraConfig: newConfig }))
+      return { added, updated }
+    },
 
     exportJSON: () => {
       const { developers, projects, tasks, schedule, scheduleHours } = get()
